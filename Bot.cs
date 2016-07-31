@@ -1,33 +1,30 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Globalization;
-using System.IO;
-using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace Wrapper
 {
-    class Bot
+    internal class Bot
     {
-        public string Email;
-        public string Pass;
-        public string Realm;
-        public string Token;
-        public string UserId;
-        public string ConfFile;
-        public Queue<string> Output = new Queue<string>();
-        public Queue<string> Input = new Queue<string>();
-        public string Args;
-        public Process Process;
+        private string _args;
+        private string _confFile;
+        private readonly string _email;
+        public readonly Queue<string> Input = new Queue<string>();
+        public readonly Queue<string> Output = new Queue<string>();
+        private readonly string _pass;
+        private Process _process;
+        private readonly string _realm;
+        private string _token;
+        private string _userId;
 
         public Bot(string email, string pass, string realm, string args)
         {
-            Email = email;
-            Pass = pass;
-            Realm = realm;
-            Args = args;
+            _email = email;
+            _pass = pass;
+            _realm = realm;
+            _args = args;
         }
 
         public void Run()
@@ -37,7 +34,7 @@ namespace Wrapper
             {
                 wrapperProcessInfo = new ProcessStartInfo
                 {
-                    Arguments = $"{Realm} {Email} {Pass}",
+                    Arguments = $"{_realm} {_email} {_pass}",
                     FileName = Environment.CurrentDirectory + @"/wrapper.sh",
                     RedirectStandardOutput = true,
                     UseShellExecute = false
@@ -47,10 +44,10 @@ namespace Wrapper
             {
                 wrapperProcessInfo = new ProcessStartInfo
                 {
-                    Arguments = $@"wrapper.sh {Realm} {Email} {Pass}",
+                    Arguments = $@"wrapper.sh {_realm} {_email} {_pass}",
                     FileName = "sh",
                     RedirectStandardOutput = true,
-                    UseShellExecute = false,
+                    UseShellExecute = false
                 };
             }
             var wrapperProcess = Process.Start(wrapperProcessInfo);
@@ -61,23 +58,24 @@ namespace Wrapper
             }
             while (!wrapperProcess.StandardOutput.EndOfStream)
             {
-                var line = wrapperProcess.StandardOutput.ReadLine() ?? "";
+                string line = wrapperProcess.StandardOutput.ReadLine() ?? "";
+                Output.Enqueue(line);
                 if (!line.Contains("SUCCESS")) continue;
                 var lines = line.Split('|');
-                Token = lines[1];
-                UserId = lines[2];
-                ConfFile = lines[3];
+                _token = lines[1];
+                _userId = lines[2];
+                _confFile = lines[3];
             }
-            if (String.IsNullOrWhiteSpace(Token) || String.IsNullOrWhiteSpace(UserId) ||
-                String.IsNullOrWhiteSpace(ConfFile))
+            if (string.IsNullOrWhiteSpace(_token) || string.IsNullOrWhiteSpace(_userId) ||
+                string.IsNullOrWhiteSpace(_confFile))
             {
                 Output.Enqueue("AUTH_FAILED");
                 return;
             }
 #if DEBUG
-            Output.Enqueue($"Token: {Token}\nUserId: {UserId}\nConfig: {ConfFile}");
+            Output.Enqueue($"Token: {_token}\nUserId: {_userId}\nConfig: {_confFile}");
 #endif
-            var arguments = $"-t {Token} -i {UserId} -f {ConfFile} " + Args;
+            string arguments = $"-t {_token} -i {_userId} -f {_confFile} " + _args;
             string fileName;
             if (Common.IsLinux)
                 fileName = Environment.CurrentDirectory + "/bot/wb";
@@ -90,22 +88,34 @@ namespace Wrapper
                 RedirectStandardOutput = true,
                 RedirectStandardInput = true,
                 RedirectStandardError = true,
-                UseShellExecute = false,
+                UseShellExecute = false
                 //WorkingDirectory = Environment.CurrentDirectory + @"\bot"
             };
-            Process = Process.Start(botProcessInfo);
-            if (Process == null)
+            _process = Process.Start(botProcessInfo);
+            if (_process == null)
             {
                 Output.Enqueue("INTERNAL_ERROR");
                 return;
             }
-            while (!Process.StandardOutput.EndOfStream)
+            while (!_process.StandardOutput.EndOfStream)
             {
-                var line = Process.StandardOutput.ReadLine() ?? "";
-                line = line.Replace("\u001b[1;31m", "").Replace("\u001b[0m", "").Replace("\u001b[1;32m","");
+                string line = _process.StandardOutput.ReadLine() ?? "";
+                if (_isWorkarounding)
+                    _isWorkarounding = false;
+                if (line.Contains("<starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>"))
+                {
+                    WorkaroundRaceConditionBug();
+                }
+                if (line.Contains("it's over"))
+                {
+                    Output.Enqueue("ITS_OVER");
+                    return;
+                }
+                if (!Common.IsLinux)
+                    line = new Regex(@"\u001b\[[\w\d;]+").Replace(line, "");
                 if (line.Contains("NICKNAME is"))
                 {
-                    var nickname = new Regex(@"NICKNAME is (.*)").Match(line).Groups[1].Value;
+                    string nickname = new Regex(@"NICKNAME is (.*)").Match(line).Groups[1].Value;
                     Output.Enqueue($"NICKNAME|{nickname}");
                 }
                 if (line.Contains("KREDITS is"))
@@ -115,9 +125,24 @@ namespace Wrapper
                 if (!line.Contains("CMD#"))
                     Output.Enqueue(line);
                 if (Input.Count > 0)
-                    Process.StandardInput.WriteLine(Input.Dequeue());
+                    _process.StandardInput.WriteLine(Input.Dequeue());
             }
             Output.Enqueue("EOL");
+        }
+
+        //If a race condition happens, bot will exit... 
+        private bool _isWorkarounding;
+        private async Task WorkaroundRaceConditionBug()
+        {
+            _isWorkarounding = true;
+            Log.ThreadSafeLog("Workarounding race condition");
+            await Task.Delay(TimeSpan.FromSeconds(10));
+            if (_isWorkarounding)
+            {
+                Log.ThreadSafeLog("Bad things happened, a bot is aborting...");
+                _process.Kill();
+            }
+                
         }
     }
 }

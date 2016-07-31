@@ -4,7 +4,7 @@ using System.Text;
 
 namespace Wrapper
 {
-    class Common
+    internal static class Common
     {
         public static bool IsLinux
         {

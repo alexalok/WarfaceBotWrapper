@@ -6,7 +6,7 @@ using System.Threading;
 
 namespace Wrapper
 {
-    class Log
+    internal static class Log
     {
         private static bool logInProgress;
         public static void ThreadSafeLog(string message, string logFile = null)
