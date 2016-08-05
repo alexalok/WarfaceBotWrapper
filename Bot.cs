@@ -1,23 +1,23 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
-namespace Wrapper
+namespace BotWrapper
 {
-    internal class Bot
+    public class Bot
     {
-        private string _args;
-        private string _confFile;
+        private readonly string _args;
         private readonly string _email;
         public readonly Queue<string> Input = new Queue<string>();
         public readonly Queue<string> Output = new Queue<string>();
         private readonly string _pass;
         private Process _process;
         private readonly string _realm;
-        private string _token;
-        private string _userId;
+        private int lastQueryId;
+        private string _nickname;
 
         public Bot(string email, string pass, string realm, string args)
         {
@@ -29,53 +29,13 @@ namespace Wrapper
 
         public void Run()
         {
-            ProcessStartInfo wrapperProcessInfo;
-            if (Common.IsLinux)
+            var wrapperInfo = new Wrapper(_realm, _email, _pass).GetWrapperInfo();
+            if (wrapperInfo == null)
             {
-                wrapperProcessInfo = new ProcessStartInfo
-                {
-                    Arguments = $"{_realm} {_email} {_pass}",
-                    FileName = Environment.CurrentDirectory + @"/wrapper.sh",
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false
-                };
-            }
-            else
-            {
-                wrapperProcessInfo = new ProcessStartInfo
-                {
-                    Arguments = $@"wrapper.sh {_realm} {_email} {_pass}",
-                    FileName = "sh",
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false
-                };
-            }
-            var wrapperProcess = Process.Start(wrapperProcessInfo);
-            if (wrapperProcess == null)
-            {
-                Output.Enqueue("INTERNAL_ERROR");
+                Output.Enqueue("WRAPPER_ERROR");
                 return;
             }
-            while (!wrapperProcess.StandardOutput.EndOfStream)
-            {
-                string line = wrapperProcess.StandardOutput.ReadLine() ?? "";
-                Output.Enqueue(line);
-                if (!line.Contains("SUCCESS")) continue;
-                var lines = line.Split('|');
-                _token = lines[1];
-                _userId = lines[2];
-                _confFile = lines[3];
-            }
-            if (string.IsNullOrWhiteSpace(_token) || string.IsNullOrWhiteSpace(_userId) ||
-                string.IsNullOrWhiteSpace(_confFile))
-            {
-                Output.Enqueue("AUTH_FAILED");
-                return;
-            }
-#if DEBUG
-            Output.Enqueue($"Token: {_token}\nUserId: {_userId}\nConfig: {_confFile}");
-#endif
-            string arguments = $"-t {_token} -i {_userId} -f {_confFile} " + _args;
+            string arguments = $"-t {wrapperInfo.Value.Token} -i {wrapperInfo.Value.UserId} -f {wrapperInfo.Value.ConfFile} " + _args;
             string fileName;
             if (Common.IsLinux)
                 fileName = Environment.CurrentDirectory + "/bot/wb";
@@ -89,12 +49,11 @@ namespace Wrapper
                 RedirectStandardInput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false
-                //WorkingDirectory = Environment.CurrentDirectory + @"\bot"
             };
             _process = Process.Start(botProcessInfo);
             if (_process == null)
             {
-                Output.Enqueue("INTERNAL_ERROR");
+                Output.Enqueue("BOT_ERROR");
                 return;
             }
             while (!_process.StandardOutput.EndOfStream)
@@ -106,17 +65,21 @@ namespace Wrapper
                 {
                     WorkaroundRaceConditionBug();
                 }
+                if (line.Contains("<-")) //incoming query
+                {
+                    ExtractQueryId(line);
+                }
                 if (line.Contains("it's over"))
                 {
-                    Output.Enqueue("ITS_OVER");
+                    Output.Enqueue("NO_PING");
                     return;
                 }
                 if (!Common.IsLinux)
                     line = new Regex(@"\u001b\[[\w\d;]+").Replace(line, "");
                 if (line.Contains("NICKNAME is"))
                 {
-                    string nickname = new Regex(@"NICKNAME is (.*)").Match(line).Groups[1].Value;
-                    Output.Enqueue($"NICKNAME|{nickname}");
+                    _nickname = new Regex(@"NICKNAME is (.*)").Match(line).Groups[1].Value;
+                    Output.Enqueue($"NICKNAME|{_nickname}");
                 }
                 if (line.Contains("KREDITS is"))
                 {
@@ -125,7 +88,7 @@ namespace Wrapper
                 if (!line.Contains("CMD#"))
                     Output.Enqueue(line);
                 if (Input.Count > 0)
-                    _process.StandardInput.WriteLine(Input.Dequeue());
+                    _process.StandardInput.WriteLine(Format.FormatQuery(query: Input.Dequeue(), lastQueryId: lastQueryId, nickname: _nickname));
             }
             Output.Enqueue("EOL");
         }
@@ -142,7 +105,22 @@ namespace Wrapper
                 Log.ThreadSafeLog("Bad things happened, a bot is aborting...");
                 _process.Kill();
             }
-                
+        }
+
+        private void ExtractQueryId(string query)
+        {
+            var match = new Regex(@"id='uid(\d{8,8})'").Match(query);
+            if (!match.Success)
+                return;
+            if (!Int32.TryParse(match.Groups[1].Value, out lastQueryId))
+            {
+                //Log.ThreadSafeLog("Error while parsing query ID");
+            }
+        }
+
+        public void Stop()
+        {
+            _process.StandardInput.Close();
         }
     }
 }

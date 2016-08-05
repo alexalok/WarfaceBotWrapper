@@ -13,3 +13,10 @@ var bot = new Bot("youremail", "yourpassword", "eu", "");
 new Task(bot.Run).Start();
 ```
 This will run main bot's thread in a new Task. To "talk" to bot, use 2 queues: **Output** (to read output from bot) and **Input** (to send commands). It is preferrable to set separate tasks to manage queues.
+
+##Sending own (user-input) queries
+When you send a query to **Input** queue, it is expected to be a valid XMPP query. However, you can use these templates in your query which will be parsed automatically before actually sending a query to WarfaceBot:
+- **{{QUERY_UID}}** - will be replaced by unique query id
+- **{{NICKNAME}}** - will be replaced by a nickname of currently running account.
+
+**Use templates ONLY after you receive *"ENABLED"* command in Output query, otherwise they WILL NOT be parsed! (Wrapper, for example, doesn't know a NICKNAME of account immediately after start)**

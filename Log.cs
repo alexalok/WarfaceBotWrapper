@@ -4,7 +4,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 
-namespace Wrapper
+namespace BotWrapper
 {
     internal static class Log
     {
