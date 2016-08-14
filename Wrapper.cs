@@ -7,9 +7,9 @@ namespace BotWrapper
 {
     class Wrapper
     {
-        private readonly string _realm;
-        private readonly string _email;
-        private readonly string _pass;
+        readonly string _realm;
+        readonly string _email;
+        readonly string _pass;
         public Wrapper(string realm, string email, string pass)
         {
             _realm = realm;
@@ -17,9 +17,9 @@ namespace BotWrapper
             _pass = pass;
         }
 
-        private string _confFile;
-        private string _token;
-        private string _userId;
+        string _confFile;
+        string _token;
+        string _userId;
         public WrapperInfo? GetWrapperInfo()
         {
             ProcessStartInfo wrapperProcessInfo;

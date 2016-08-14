@@ -9,22 +9,25 @@ namespace BotWrapper
 {
     public class Bot
     {
-        private readonly string _args;
-        private readonly string _email;
+        readonly string _args;
+        readonly string _email;
         public readonly Queue<string> Input = new Queue<string>();
         public readonly Queue<string> Output = new Queue<string>();
-        private readonly string _pass;
-        private Process _process;
-        private readonly string _realm;
-        private int lastQueryId;
-        private string _nickname;
+        readonly string _pass;
+        Process _process;
+        readonly string _realm;
+        int _lastQueryId;
+        string _nickname;
+        readonly bool _autorestart;
+        int _autorestartedCount;
 
-        public Bot(string email, string pass, string realm, string args)
+        public Bot(string email, string pass, string realm, string args, bool autorestart = false)
         {
             _email = email;
             _pass = pass;
             _realm = realm;
             _args = args;
+            _autorestart = autorestart;
         }
 
         public void Run()
@@ -59,12 +62,6 @@ namespace BotWrapper
             while (!_process.StandardOutput.EndOfStream)
             {
                 string line = _process.StandardOutput.ReadLine() ?? "";
-                if (_isWorkarounding)
-                    _isWorkarounding = false;
-                if (line.Contains("<starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>"))
-                {
-                    WorkaroundRaceConditionBug();
-                }
                 if (line.Contains("<-")) //incoming query
                 {
                     ExtractQueryId(line);
@@ -74,6 +71,8 @@ namespace BotWrapper
                     Output.Enqueue("NO_PING");
                     return;
                 }
+                if (line.Contains("Custom query error"))
+                    Input.Enqueue("quit");
                 if (!Common.IsLinux)
                     line = new Regex(@"\u001b\[[\w\d;]+").Replace(line, "");
                 if (line.Contains("NICKNAME is"))
@@ -88,39 +87,38 @@ namespace BotWrapper
                 if (!line.Contains("CMD#"))
                     Output.Enqueue(line);
                 if (Input.Count > 0)
-                    _process.StandardInput.WriteLine(Format.FormatQuery(query: Input.Dequeue(), lastQueryId: lastQueryId, nickname: _nickname));
+                    _process.StandardInput.WriteLine(Format.FormatQuery(query: Input.Dequeue(), lastQueryId: _lastQueryId, nickname: _nickname));
             }
-            Output.Enqueue("EOL");
-        }
-
-        //If a race condition happens, bot will exit... 
-        private bool _isWorkarounding;
-        private async Task WorkaroundRaceConditionBug()
-        {
-            _isWorkarounding = true;
-            Log.ThreadSafeLog("Workarounding race condition");
-            await Task.Delay(TimeSpan.FromSeconds(10));
-            if (_isWorkarounding)
+            if (!_autorestart || _isForceStopping /*|| _autorestartedCount > 5*/)
             {
-                Log.ThreadSafeLog("Bad things happened, a bot is aborting...");
-                _process.Kill();
+                Output.Enqueue("EOL");
+                _isForceStopping = false;
+            }
+            else
+            {
+                _autorestartedCount++;
+                Output.Enqueue("AUTORESTART #" + _autorestartedCount);
+                Run();
             }
         }
 
-        private void ExtractQueryId(string query)
+        void ExtractQueryId(string query)
         {
             var match = new Regex(@"id='uid(\d{8,8})'").Match(query);
             if (!match.Success)
                 return;
-            if (!Int32.TryParse(match.Groups[1].Value, out lastQueryId))
+            if (!Int32.TryParse(match.Groups[1].Value, out _lastQueryId))
             {
                 //Log.ThreadSafeLog("Error while parsing query ID");
             }
         }
 
+        bool _isForceStopping;
         public void Stop()
         {
-            _process.StandardInput.Close();
+            Log.ThreadSafeLog("Stopping bot", "main");
+            _isForceStopping = true;
+            _process?.StandardInput.Close();
         }
     }
 }

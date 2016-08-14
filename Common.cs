@@ -4,13 +4,13 @@ using System.Text;
 
 namespace BotWrapper
 {
-    internal static class Common
+    static class Common
     {
         public static bool IsLinux
         {
             get
             {
-                var p = (int)Environment.OSVersion.Platform;
+                int p = (int)Environment.OSVersion.Platform;
                 return (p == 4) || (p == 6) || (p == 128);
             }
         }
